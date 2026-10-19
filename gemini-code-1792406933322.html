@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interventometro - GDL 1-12</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans">
+
+    <!-- Top Bar -->
+    <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-white/10 p-2.5 rounded-xl">
+                    <i class="fa-solid fa-chart-pie text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">Interventometro GDL</h1>
+                    <p class="text-xs text-indigo-200">Tracciamento Interventi in Aula (Cloud Sincronizzato)</p>
+                </div>
+            </div>
+
+            <!-- Global Stats & Controls -->
+            <div class="flex items-center space-x-3 flex-wrap">
+                <div class="bg-indigo-700/80 px-3 py-1.5 rounded-lg border border-indigo-500/40 text-sm">
+                    <span class="text-indigo-200 text-xs block">Totale Interventi</span>
+                    <span id="globalTotal" class="font-bold text-lg">0</span>
+                </div>
+                <div class="bg-indigo-700/80 px-3 py-1.5 rounded-lg border border-indigo-500/40 text-sm">
+                    <span class="text-indigo-200 text-xs block">Stato Cloud</span>
+                    <span id="cloudStatus" class="font-bold text-sm text-emerald-300"><i class="fa-solid fa-circle-notch fa-spin"></i> Connessione...</span>
+                </div>
+                <button onclick="undoLast()" class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-1 shadow-sm">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span class="hidden sm:inline">Annulla</span>
+                </button>
+                <button onclick="openSettingsModal()" class="bg-indigo-700 hover:bg-indigo-800 text-white px-3 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-1">
+                    <i class="fa-solid fa-gear"></i>
+                    <span class="hidden sm:inline">Impostazioni</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Navigation Tabs (Lezione attiva vs Storico Corso) -->
+    <div class="max-w-7xl mx-auto w-full px-4 mt-6">
+        <div class="flex space-x-2 border-b border-slate-200 pb-2">
+            <button onclick="switchTab('live')" id="tabLive" class="px-4 py-2 font-semibold rounded-lg transition bg-indigo-600 text-white shadow-sm flex items-center space-x-2">
+                <i class="fa-solid fa-play"></i>
+                <span>Lezione in Corso</span>
+            </button>
+            <button onclick="switchTab('history')" id="tabHistory" class="px-4 py-2 font-semibold rounded-lg transition bg-white text-slate-600 hover:bg-slate-100 border border-slate-200 flex items-center space-x-2">
+                <i class="fa-solid fa-database"></i>
+                <span>Storico Corso & Sezioni</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="max-w-7xl mx-auto w-full p-4 flex-grow">
+
+        <!-- TAB LIVE -->
+        <div id="viewLive" class="space-y-6">
+            <!-- Barra gestione lezione corrente -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center space-x-3 flex-grow max-w-md">
+                    <label for="lessonTitle" class="text-sm font-medium text-slate-600 whitespace-nowrap">Sessione:</label>
+                    <input type="text" id="lessonTitle" value="Lezione odierna" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="archiveCurrentLesson()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-2 shadow-sm">
+                        <i class="fa-solid fa-box-archive"></i>
+                        <span>Archivia Lezione (Nuova Sessione)</span>
+                    </button>
+                    <button onclick="resetCurrentSession()" class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 px-3 py-2 rounded-lg text-sm font-medium transition">
+                        <i class="fa-solid fa-trash-can mr-1"></i> Pulisci
+                    </button>
+                </div>
+            </div>
+
+            <!-- Griglia a due colonne: SX GDL, DX Grafici & Classifica -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- COLONNA SINISTRA: GDL da 1 a 12 divisi in Sezioni -->
+                <div class="lg:col-span-7 space-y-6">
+                    
+                    <!-- 1^ Sezione (GDL 1-4) -->
+                    <div class="bg-white rounded-xl shadow-sm border border-indigo-100 overflow-hidden">
+                        <div class="bg-indigo-50 px-4 py-2.5 border-b border-indigo-100 flex justify-between items-center">
+                            <h3 class="font-bold text-indigo-900 text-sm flex items-center space-x-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
+                                <span>1^ Sezione (GDL 1 - 4)</span>
+                            </h3>
+                            <span id="sec1Total" class="text-xs font-bold bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full">Tot: 0</span>
+                        </div>
+                        <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3" id="gdlContainerSec1">
+                            <!-- Inseriti via JS -->
+                        </div>
+                    </div>
+
+                    <!-- 2^ Sezione (GDL 5-8) -->
+                    <div class="bg-white rounded-xl shadow-sm border border-emerald-100 overflow-hidden">
+                        <div class="bg-emerald-50 px-4 py-2.5 border-b border-emerald-100 flex justify-between items-center">
+                            <h3 class="font-bold text-emerald-900 text-sm flex items-center space-x-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                                <span>2^ Sezione (GDL 5 - 8)</span>
+                            </h3>
+                            <span id="sec2Total" class="text-xs font-bold bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full">Tot: 0</span>
+                        </div>
+                        <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3" id="gdlContainerSec2">
+                            <!-- Inseriti via JS -->
+                        </div>
+                    </div>
+
+                    <!-- 3^ Sezione (GDL 9-12) -->
+                    <div class="bg-white rounded-xl shadow-sm border border-amber-100 overflow-hidden">
+                        <div class="bg-amber-50 px-4 py-2.5 border-b border-amber-100 flex justify-between items-center">
+                            <h3 class="font-bold text-amber-900 text-sm flex items-center space-x-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-600"></span>
+                                <span>3^ Sezione (GDL 9 - 12)</span>
+                            </h3>
+                            <span id="sec3Total" class="text-xs font-bold bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full">Tot: 0</span>
+                        </div>
+                        <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3" id="gdlContainerSec3">
+                            <!-- Inseriti via JS -->
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- COLONNA DESTRA: Analitiche, Sezioni & Classifica -->
+                <div class="lg:col-span-5 space-y-6">
+                    
+                    <!-- Riepilogo Sezioni Card -->
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                        <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center space-x-2">
+                            <i class="fa-solid fa-chart-column text-indigo-600"></i>
+                            <span>Statistiche per Sezione</span>
+                        </h3>
+                        <div class="grid grid-cols-3 gap-3 mb-4">
+                            <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-100 text-center">
+                                <span class="text-xs text-indigo-700 font-semibold block">1^ Sezione</span>
+                                <span id="statSec1Count" class="text-lg font-bold text-indigo-900">0</span>
+                                <span id="statSec1Perc" class="text-[10px] text-indigo-500 block">0%</span>
+                            </div>
+                            <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 text-center">
+                                <span class="text-xs text-emerald-700 font-semibold block">2^ Sezione</span>
+                                <span id="statSec2Count" class="text-lg font-bold text-emerald-900">0</span>
+                                <span id="statSec2Perc" class="text-[10px] text-emerald-500 block">0%</span>
+                            </div>
+                            <div class="bg-amber-50 p-3 rounded-lg border border-amber-100 text-center">
+                                <span class="text-xs text-amber-700 font-semibold block">3^ Sezione</span>
+                                <span id="statSec3Count" class="text-lg font-bold text-amber-900">0</span>
+                                <span id="statSec3Perc" class="text-[10px] text-amber-500 block">0%</span>
+                            </div>
+                        </div>
+                        <div class="h-44 relative">
+                            <canvas id="sectionsBarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Distribuzione GDL (Torta) -->
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                        <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center space-x-2">
+                            <i class="fa-solid fa-chart-pie text-indigo-600"></i>
+                            <span>Distribuzione Interventi GDL</span>
+                        </h3>
+                        <div class="h-56 relative flex items-center justify-center">
+                            <canvas id="gdlDoughnutChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Classifica Live GDL -->
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                        <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center space-x-2">
+                            <i class="fa-solid fa-trophy text-amber-500"></i>
+                            <span>Classifica Interventi (Lezione Corrente)</span>
+                        </h3>
+                        <div id="liveLeaderboard" class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                            <!-- Popolato da JS -->
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <!-- TAB STORICO CORSO & SEZIONI -->
+        <div id="viewHistory" class="space-y-6 hidden">
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-800">Storico e Andamento Corso</h2>
+                    <p class="text-xs text-slate-500">Analisi cumulativa di tutte le lezioni archiviate nel corso dei mesi.</p>
+                </div>
+                <div class="flex space-x-2">
+                    <button onclick="exportJSON()" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-download"></i>
+                        <span>Scarica Backup JSON</span>
+                    </button>
+                    <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-file-excel"></i>
+                        <span>Esporta CSV Excel</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Statistiche Cumulative Globali -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">Lezioni Archiviate</span>
+                    <span id="historyTotalLessons" class="text-2xl font-black text-slate-800 mt-1 block">0</span>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">Interventi Totali Corso</span>
+                    <span id="historyTotalInterventions" class="text-2xl font-black text-indigo-600 mt-1 block">0</span>
+                </div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">GDL Più Attivo</span>
+                    <span id="historyTopGdl" class="text-xl font-bold text-emerald-600 mt-1 block">-</span>
+                </div>
+            </div>
+
+            <!-- Grafico Trend Storico -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center space-x-2">
+                    <i class="fa-solid fa-chart-line text-indigo-600"></i>
+                    <span>Andamento Sezioni nel Corso delle Lezioni</span>
+                </h3>
+                <div class="h-72 relative">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Lista Lezioni Archiviate -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-200">
+                    <h3 class="font-bold text-slate-800 text-sm">Registro Sessioni Passate</h3>
+                </div>
+                <div class="divide-y divide-slate-100 max-h-96 overflow-y-auto" id="archivedLessonsList">
+                    <!-- Popolato da JS -->
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- MODALE IMPOSTAZIONI / BACKUP -->
+    <div id="settingsModal" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="font-bold text-slate-800 text-base">Impostazioni & Cloud</h3>
+                <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="space-y-3 text-sm text-slate-600">
+                <p>I dati vengono salvati automaticamente su Firebase Cloud in tempo reale ad ogni intervento o modifica.</p>
+                
+                <div class="pt-2">
+                    <label class="font-medium text-slate-700 block mb-1">Ripristina / Importa Backup JSON</label>
+                    <input type="file" id="importFile" accept=".json" onchange="importJSON(event)" class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                </div>
+
+                <div class="pt-4 border-t border-slate-100 flex justify-end space-x-2">
+                    <button onclick="closeSettingsModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium text-xs">Chiudi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Logica Applicazione con Firebase Realtime Database -->
+    <script>
+        // Configurazione Firebase fornita dall'utente
+        const firebaseConfig = {
+            apiKey: "AIzaSyAi-ofMhz4Dv84QuC-lFevw9txCGeKriYM",
+            authDomain: "interventometro-6a41f.firebaseapp.com",
+            databaseURL: "https://interventometro-6a41f-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "interventometro-6a41f",
+            storageBucket: "interventometro-6a41f.firebasestorage.app",
+            messagingSenderId: "721303741595",
+            appId: "1:721303741595:web:1660415f8bd1f36628d23e"
+        };
+
+        // Inizializzazione Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // Stato dell'applicazione
+        let appState = {
+            activeSession: {
+                title: "Lezione odierna",
+                gdl: {
+                    1: 0, 2: 0, 3: 0, 4: 0,
+                    5: 0, 6: 0, 7: 0, 8: 0,
+                    9: 0, 10: 0, 11: 0, 12: 0
+                }
+            },
+            history: [] // Array di lezioni archiviate
+        };
+
+        let lastAction = null; // Per il tasto Annulla
+        let sectionsChart = null;
+        let doughnutChart = null;
+        let trendChart = null;
+
+        // Riferimento al database cloud
+        const dbRef = db.ref('interventometro_data');
+
+        // Caricamento dati da Firebase all'avvio
+        function initApp() {
+            dbRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    appState.activeSession = data.activeSession || appState.activeSession;
+                    appState.history = data.history || [];
+                }
+                document.getElementById('lessonTitle').value = appState.activeSession.title;
+                updateCloudStatus('online');
+                renderUI();
+            }, (error) => {
+                console.error("Errore Firebase:", error);
+                updateCloudStatus('offline');
+                loadFromLocalStorageFallback();
+            });
+        }
+
+        function updateCloudStatus(status) {
+            const el = document.getElementById('cloudStatus');
+            if (status === 'online') {
+                el.innerHTML = '<i class="fa-solid fa-cloud text-emerald-300"></i> Cloud Sync';
+                el.className = 'font-bold text-sm text-emerald-300';
+            } else {
+                el.innerHTML = '<i class="fa-solid fa-triangle-exclamation text-amber-300"></i> Offline mode';
+                el.className = 'font-bold text-sm text-amber-300';
+            }
+        }
+
+        function saveToCloud() {
+            dbRef.set(appState).catch(err => {
+                console.error("Errore salvataggio cloud:", err);
+                // Fallback locale in caso di problemi di rete
+                localStorage.setItem('interventometro_backup', JSON.stringify(appState));
+            });
+        }
+
+        function loadFromLocalStorageFallback() {
+            const saved = localStorage.getItem('interventometro_backup');
+            if (saved) {
+                appState = JSON.parse(saved);
+                document.getElementById('lessonTitle').value = appState.activeSession.title;
+                renderUI();
+            }
+        }
+
+        // Generazione della griglia GDL divisa per sezioni
+        function buildGdlGrids() {
+            const sec1 = [1, 2, 3, 4];
+            const sec2 = [5, 6, 7, 8];
+            const sec3 = [9, 10, 11, 12];
+
+            document.getElementById('gdlContainerSec1').innerHTML = sec1.map(i => gdlCardHTML(i)).join('');
+            document.getElementById('gdlContainerSec2').innerHTML = sec2.map(i => gdlCardHTML(i)).join('');
+            document.getElementById('gdlContainerSec3').innerHTML = sec3.map(i => gdlCardHTML(i)).join('');
+        }
+
+        function gdlCardHTML(id) {
+            const count = appState.activeSession.gdl[id] || 0;
+            return `
+                <div class="bg-slate-50 hover:bg-slate-100/80 border border-slate-200 p-3 rounded-xl flex items-center justify-between transition group">
+                    <div>
+                        <span class="font-bold text-slate-800 text-sm block">GDL ${id}</span>
+                        <span class="text-xs text-slate-400 font-medium">Interventi: <strong class="text-indigo-600 text-sm">${count}</strong></span>
+                    </div>
+                    <div class="flex items-center space-x-1.5">
+                        <button onclick="incrementGdl(${id})" class="bg-indigo-600 hover:bg-indigo-700 text-white w-9 h-9 rounded-lg font-bold shadow-sm transition flex items-center justify-center text-base">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                        <button onclick="decrementGdl(${id})" class="bg-slate-200 hover:bg-slate-300 text-slate-600 w-7 h-7 rounded-lg font-bold transition flex items-center justify-center text-xs">
+                            <i class="fa-solid fa-minus"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function incrementGdl(id) {
+            appState.activeSession.gdl[id] = (appState.activeSession.gdl[id] || 0) + 1;
+            lastAction = { type: 'inc', id: id };
+            saveToCloud();
+            renderUI();
+        }
+
+        function decrementGdl(id) {
+            if ((appState.activeSession.gdl[id] || 0) > 0) {
+                appState.activeSession.gdl[id]--;
+                lastAction = { type: 'dec', id: id };
+                saveToCloud();
+                renderUI();
+            }
+        }
+
+        function undoLast() {
+            if (!lastAction) return;
+            if (lastAction.type === 'inc') {
+                if (appState.activeSession.gdl[lastAction.id] > 0) appState.activeSession.gdl[lastAction.id]--;
+            } else if (lastAction.type === 'dec') {
+                appState.activeSession.gdl[lastAction.id]++;
+            }
+            lastAction = null;
+            saveToCloud();
+            renderUI();
+        }
+
+        function resetCurrentSession() {
+            if (confirm("Vuoi azzerare i contatori della sessione corrente?")) {
+                for (let i = 1; i <= 12; i++) appState.activeSession.gdl[i] = 0;
+                lastAction = null;
+                saveToCloud();
+                renderUI();
+            }
+        }
+
+        function archiveCurrentLesson() {
+            const titleInput = document.getElementById('lessonTitle').value.trim() || "Lezione";
+            const totalCurr = Object.values(appState.activeSession.gdl).reduce((a, b) => a + b, 0);
+            
+            if (totalCurr === 0) {
+                alert("Non ci sono interventi registrati da archiviare!");
+                return;
+            }
+
+            const archivedLesson = {
+                id: Date.now(),
+                title: titleInput,
+                date: new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                gdl: { ...appState.activeSession.gdl }
+            };
+
+            appState.history.unshift(archivedLesson);
+            
+            // Reset active session
+            appState.activeSession.title = "Nuova Sessione";
+            for (let i = 1; i <= 12; i++) appState.activeSession.gdl[i] = 0;
+            document.getElementById('lessonTitle').value = appState.activeSession.title;
+            lastAction = null;
+
+            saveToCloud();
+            renderUI();
+            alert("Lezione archiviata con successo nello Storico Corso!");
+        }
+
+        function deleteArchivedLesson(id) {
+            if (confirm("Vuoi eliminare questa lezione dallo storico?")) {
+                appState.history = appState.history.filter(l => l.id !== id);
+                saveToCloud();
+                renderUI();
+            }
+        }
+
+        // Calcoli e aggiornamento interfaccia
+        function renderUI() {
+            buildGdlGrids();
+
+            // Calcoli Sezioni
+            let s1 = 0, s2 = 0, s3 = 0;
+            for (let i = 1; i <= 4; i++) s1 += (appState.activeSession.gdl[i] || 0);
+            for (let i = 5; i <= 8; i++) s2 += (appState.activeSession.gdl[i] || 0);
+            for (let i = 9; i <= 12; i++) s3 += (appState.activeSession.gdl[i] || 0);
+
+            const total = s1 + s2 + s3;
+
+            document.getElementById('globalTotal').innerText = total;
+            document.getElementById('sec1Total').innerText = `Tot: ${s1}`;
+            document.getElementById('sec2Total').innerText = `Tot: ${s2}`;
+            document.getElementById('sec3Total').innerText = `Tot: ${s3}`;
+
+            document.getElementById('statSec1Count').innerText = s1;
+            document.getElementById('statSec2Count').innerText = s2;
+            document.getElementById('statSec3Count').innerText = s3;
+
+            document.getElementById('statSec1Perc').innerText = total > 0 ? Math.round((s1 / total) * 100) + '%' : '0%';
+            document.getElementById('statSec2Perc').innerText = total > 0 ? Math.round((s2 / total) * 100) + '%' : '0%';
+            document.getElementById('statSec3Perc').innerText = total > 0 ? Math.round((s3 / total) * 100) + '%' : '0%';
+
+            // Classifica Live
+            let gdlArray = [];
+            for (let i = 1; i <= 12; i++) {
+                gdlArray.push({ id: i, count: appState.activeSession.gdl[i] || 0 });
+            }
+            gdlArray.sort((a, b) => b.count - a.count);
+
+            const lbHTML = gdlArray.map((item, index) => {
+                const perc = total > 0 ? Math.round((item.count / total) * 100) : 0;
+                return `
+                    <div class="flex items-center justify-between text-xs py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-100">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-bold text-slate-400 w-4">${index + 1}°</span>
+                            <span class="font-bold text-slate-700">GDL ${item.id}</span>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="w-24 bg-slate-200 h-2 rounded-full overflow-hidden hidden sm:block">
+                                <div class="bg-indigo-600 h-full rounded-full" style="width: ${perc}%"></div>
+                            </div>
+                            <span class="font-bold text-indigo-600">${item.count} (${perc}%)</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('liveLeaderboard').innerHTML = lbHTML;
+
+            // Aggiorna Grafici
+            updateCharts(s1, s2, s3, gdlArray);
+            renderHistoryView();
+        }
+
+        // Grafici Chart.js
+        function updateCharts(s1, s2, s3, gdlArray) {
+            // 1. Bar Chart Sezioni
+            const ctxBar = document.getElementById('sectionsBarChart').getContext('2d');
+            if (sectionsChart) {
+                sectionsChart.data.datasets[0].data = [s1, s2, s3];
+                sectionsChart.update();
+            } else {
+                sectionsChart = new Chart(ctxBar, {
+                    type: 'bar',
+                    data: {
+                        labels: ['1^ Sezione (1-4)', '2^ Sezione (5-8)', '3^ Sezione (9-12)'],
+                        datasets: [{
+                            data: [s1, s2, s3],
+                            backgroundColor: ['#4f46e5', '#10b981', '#f59e0b'],
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                    }
+                });
+            }
+
+            // 2. Doughnut Chart GDL
+            const ctxDoughnut = document.getElementById('gdlDoughnutChart').getContext('2d');
+            const doughnutLabels = gdlArray.map(i => `GDL ${i.id}`);
+            const doughnutData = gdlArray.map(i => i.count);
+
+            if (doughnutChart) {
+                doughnutChart.data.labels = doughnutLabels;
+                doughnutChart.data.datasets[0].data = doughnutData;
+                doughnutChart.update();
+            } else {
+                doughnutChart = new Chart(ctxDoughnut, {
+                    type: 'doughnut',
+                    data: {
+                        labels: doughnutLabels,
+                        datasets: [{
+                            data: doughnutData,
+                            backgroundColor: [
+                                '#4f46e5', '#6366f1', '#818cf8', '#a5b4fc',
+                                '#10b981', '#34d399', '#6ee7b7', '#a7f3d0',
+                                '#f59e0b', '#fbbf24', '#fcd34d', '#fde68a'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 } } } }
+                    }
+                });
+            }
+        }
+
+        // Vista Storico & Sezioni
+        function renderHistoryView() {
+            document.getElementById('historyTotalLessons').innerText = appState.history.length;
+            
+            let totalCourseInterventions = 0;
+            let courseGdlTotals = {};
+            for (let i = 1; i <= 12; i++) courseGdlTotals[i] = 0;
+
+            appState.history.forEach(lesson => {
+                for (let i = 1; i <= 12; i++) {
+                    const c = lesson.gdl[i] || 0;
+                    totalCourseInterventions += c;
+                    courseGdlTotals[i] += c;
+                }
+            });
+
+            document.getElementById('historyTotalInterventions').innerText = totalCourseInterventions;
+
+            let topGdlId = 1;
+            let maxC = -1;
+            for (let i = 1; i <= 12; i++) {
+                if (courseGdlTotals[i] > maxC) {
+                    maxC = courseGdlTotals[i];
+                    topGdlId = i;
+                }
+            }
+            document.getElementById('historyTopGdl').innerText = maxC > 0 ? `GDL ${topGdlId} (${maxC} interv.)` : '-';
+
+            // Lista Lezioni Archiviate HTML
+            const listEl = document.getElementById('archivedLessonsList');
+            if (appState.history.length === 0) {
+                listEl.innerHTML = `<div class="p-6 text-center text-slate-400 text-sm">Nessuna lezione archiviata nello storico.</div>`;
+            } else {
+                listEl.innerHTML = appState.history.map(lesson => {
+                    let lessonSum = Object.values(lesson.gdl).reduce((a, b) => a + b, 0);
+                    return `
+                        <div class="p-4 flex items-center justify-between hover:bg-slate-50 transition">
+                            <div>
+                                <h4 class="font-bold text-slate-800 text-sm">${lesson.title}</h4>
+                                <span class="text-xs text-slate-400"><i class="fa-regular fa-clock mr-1"></i>${lesson.date}</span>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                <span class="bg-indigo-50 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full">${lessonSum} Interventi</span>
+                                <button onclick="deleteArchivedLesson(${lesson.id})" class="text-rose-400 hover:text-rose-600 text-xs p-1">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            // Trend Chart
+            updateTrendChart();
+        }
+
+        function updateTrendChart() {
+            const ctxTrend = document.getElementById('trendChart').getContext('2d');
+            const sortedHistory = [...appState.history].reverse(); // Dal meno recente al più recente
+            
+            const labels = sortedHistory.map(l => l.title);
+            const dataSec1 = sortedHistory.map(l => (l.gdl[1]||0) + (l.gdl[2]||0) + (l.gdl[3]||0) + (l.gdl[4]||0));
+            const dataSec2 = sortedHistory.map(l => (l.gdl[5]||0) + (l.gdl[6]||0) + (l.gdl[7]||0) + (l.gdl[8]||0));
+            const dataSec3 = sortedHistory.map(l => (l.gdl[9]||0) + (l.gdl[10]||0) + (l.gdl[11]||0) + (l.gdl[12]||0));
+
+            if (trendChart) {
+                trendChart.data.labels = labels;
+                trendChart.data.datasets[0].data = dataSec1;
+                trendChart.data.datasets[1].data = dataSec2;
+                trendChart.data.datasets[2].data = dataSec3;
+                trendChart.update();
+            } else {
+                trendChart = new Chart(ctxTrend, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: '1^ Sezione (1-4)', data: dataSec1, borderColor: '#4f46e5', backgroundColor: '#4f46e5', tension: 0.2 },
+                            { label: '2^ Sezione (5-8)', data: dataSec2, borderColor: '#10b981', backgroundColor: '#10b981', tension: 0.2 },
+                            { label: '3^ Sezione (9-12)', data: dataSec3, borderColor: '#f59e0b', backgroundColor: '#f59e0b', tension: 0.2 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                    }
+                });
+            }
+        }
+
+        // Cambio Tab
+        function switchTab(tab) {
+            const liveView = document.getElementById('viewLive');
+            const historyView = document.getElementById('viewHistory');
+            const tabLive = document.getElementById('tabLive');
+            const tabHistory = document.getElementById('tabHistory');
+
+            if (tab === 'live') {
+                liveView.classList.remove('hidden');
+                historyView.classList.add('hidden');
+                tabLive.className = "px-4 py-2 font-semibold rounded-lg transition bg-indigo-600 text-white shadow-sm flex items-center space-x-2";
+                tabHistory.className = "px-4 py-2 font-semibold rounded-lg transition bg-white text-slate-600 hover:bg-slate-100 border border-slate-200 flex items-center space-x-2";
+            } else {
+                liveView.classList.add('hidden');
+                historyView.classList.remove('hidden');
+                tabHistory.className = "px-4 py-2 font-semibold rounded-lg transition bg-indigo-600 text-white shadow-sm flex items-center space-x-2";
+                tabLive.className = "px-4 py-2 font-semibold rounded-lg transition bg-white text-slate-600 hover:bg-slate-100 border border-slate-200 flex items-center space-x-2";
+                renderHistoryView();
+            }
+        }
+
+        // Export JSON / CSV
+        function exportJSON() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", "interventometro_backup_corso.json");
+            dlAnchorElem.click();
+        }
+
+        function exportCSV() {
+            let csvContent = "data:text/csv;charset=utf-8,ID Lezione,Titolo Lezione,Data,GDL 1,GDL 2,GDL 3,GDL 4,GDL 5,GDL 6,GDL 7,GDL 8,GDL 9,GDL 10,GDL 11,GDL 12\r\n";
+            
+            appState.history.forEach(l => {
+                let row = [l.id, `"${l.title}"`, `"${l.date}"`];
+                for (let i = 1; i <= 12; i++) row.push(l.gdl[i] || 0);
+                csvContent += row.join(",") + "\r\n";
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "interventometro_storico.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function importJSON(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    if (imported && imported.activeSession) {
+                        appState = imported;
+                        saveToCloud();
+                        renderUI();
+                        alert("Backup importato con successo!");
+                    } else {
+                        alert("File non valido.");
+                    }
+                } catch(err) {
+                    alert("Errore durante la lettura del file JSON.");
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Modale impostazioni
+        function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
+        function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
+
+        // Avvio all'apertura pagina
+        window.onload = function() {
+            initApp();
+        };
+    </script>
+</body>
+</html>
